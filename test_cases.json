@@ -1,0 +1,9 @@
+[
+  {
+    "name": "Normal workload",
+    "tasks": [
+      {"name": "Math HW", "due": 2, "estimated_hours": 2},
+      {"name": "Essay", "due": 5, "estimated_hours": 4}
+    ]
+  }
+]
