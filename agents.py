@@ -1,228 +1,97 @@
 import os
-import json
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
-import requests
+from canvasapi import Canvas
+import pytz # Standard for handling timezones
 
+# --- IMPORT WORKFLOW TOOLS ---
+from tools import generate_smart_schedule 
+from evaluation import evaluate_schedule
 
-# Load API key
 load_dotenv()
 
-HF_API_KEY = os.getenv("HF_API_KEY")
+class HomeworkHorse:
+    def __init__(self):
+        self.url = os.getenv("CANVAS_API_URL")
+        self.key = os.getenv("CANVAS_API_KEY")
+        self.lookahead_days = 7  # 📅 Hard limit for the agent
+        
+        if not self.url or not self.key:
+            raise ValueError("Environment variables not found.")
 
-API_URL = "https://api-inference.huggingface.co/models/google/flan-t5-large"
+        self.canvas = Canvas(self.url, self.key)
+        self.user = self.canvas.get_current_user()
 
-headers = {
-    "Authorization": f"Bearer {HF_API_KEY}"
-}
+    def log(self, stage, message):
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] 🐴 {stage.upper()}: {message}")
 
-# -----------------------------
-# GLOBAL STATE
-# -----------------------------
-state = {
-    "goal": "Generate and refine a study schedule that completes all assignments before deadlines.",
-    "tasks": [],
-    "schedule": [],
-    "logs": []
-}
+    def run(self):
+        print("\n" + "="*50 + "\n   HOMEWORK-HORSE AGENT: HARD-FILTER MODE\n" + "="*50)
 
-# -----------------------------
-# LOGGING FUNCTION
-# -----------------------------
-def log(message):
-    state["logs"].append(message)
-    print(message)
+        # STEP 1: OBSERVE
+        self.log("Observe", "Fetching course contexts...")
+        courses = self.user.get_courses(enrollment_state='active')
+        context_codes = [f"course_{c.id}" for c in courses]
+        context_codes.append(f"user_{self.user.id}")
 
-# -----------------------------
-# TOOL: SCHEDULING FUNCTION
-# -----------------------------
-def generate_schedule(tasks):
-    log("Tool: Generating schedule...")
+        now = datetime.now(pytz.utc)
+        horizon = now + timedelta(days=self.lookahead_days)
 
-    # Sort tasks by earliest deadline
-    tasks_sorted = sorted(tasks, key=lambda x: x["due"])
+        self.log("Observe", f"Scanning for assignments due by {horizon.strftime('%m/%d')}...")
+        
+        raw_items = self.canvas.get_calendar_events(
+            type="assignment", 
+            context_codes=context_codes,
+            all_events=True
+        )
+        
+        tasks = []
+        for i in raw_items:
+            if hasattr(i, 'end_at') and i.end_at:
+                # Parse the Canvas date string into a Python datetime object
+                due_dt = datetime.strptime(i.end_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.utc)
+                
+                # 🛡️ THE HARD FILTER: Only keep if due date is between NOW and HORIZON
+                if now <= due_dt <= horizon:
+                    tasks.append({"name": i.title, "due": i.end_at})
+                else:
+                    # Optional: uncomment to see what's being ignored
+                    # print(f"DEBUG: Ignoring {i.title} (Due {due_dt.strftime('%m/%d')})")
+                    pass
 
-    schedule = []
-    current_day = 1
+        if not tasks:
+            self.log("End", f"Filtered out all distant tasks. Nothing due in the next {self.lookahead_days} days!")
+            return
 
-    for task in tasks_sorted:
-        hours_left = task["estimated_hours"]
+        self.log("Observe", f"Gathered {len(tasks)} tasks after applying the 7-day filter.")
 
-        while hours_left > 0:
-            block = min(2, hours_left)  # max 2 hours per block
+        # --- REST OF THE WORKFLOW (Same as before) ---
+        self.log("Tool Call", "Generating Smart Schedule...")
+        final_schedule = generate_smart_schedule(tasks)
 
-            schedule.append({
-                "task": task["name"],
-                "day": current_day,
-                "hours": block
-            })
+        self.log("Evaluate", "Checking plan quality...")
+        report = evaluate_schedule(final_schedule, tasks)
+        if not report["valid"]:
+            for w in report["warnings"]: print(f"   ⚠️  {w}")
 
-            hours_left -= block
-            current_day += 1
+        print("\nPROPOSED STUDY BLOCKS:")
+        for block in final_schedule:
+            print(f"  - {block['start'].strftime('%a %I:%M %p')}: {block['task']}")
+        
+        confirm = input("\n[?] Push these to your Canvas Calendar? (y/n): ")
+        if confirm.lower() == 'y':
+            for block in final_schedule:
+                self.deploy(block)
+            self.log("End", "Success!")
 
-    return schedule
-
-# -----------------------------
-# TOOL: EVALUATE SCHEDULE
-# -----------------------------
-def evaluate_schedule(schedule, tasks):
-    log("Tool: Evaluating schedule...")
-
-    total_hours_per_day = {}
-
-    for item in schedule:
-        day = item["day"]
-        total_hours_per_day[day] = total_hours_per_day.get(day, 0) + item["hours"]
-
-    # Detect overload (>5 hours/day)
-    overloaded_days = [day for day, hrs in total_hours_per_day.items() if hrs > 5]
-
-    return {
-        "overloaded_days": overloaded_days,
-        "valid": len(overloaded_days) == 0
-    }
-
-# -----------------------------
-# TOOL: REFINE SCHEDULE
-# -----------------------------
-def refine_schedule(schedule):
-    log("Tool: Refining schedule...")
-
-    # Push excess work to later days
-    new_schedule = []
-    day_load = {}
-
-    for item in schedule:
-        day = item["day"]
-        hours = item["hours"]
-
-        if day_load.get(day, 0) + hours > 5:
-            # move to next day
-            day += 1
-
-        day_load[day] = day_load.get(day, 0) + hours
-
-        new_schedule.append({
-            "task": item["task"],
-            "day": day,
-            "hours": hours
+    def deploy(self, block):
+        self.canvas.create_calendar_event(calendar_event={
+            "context_code": f"user_{self.user.id}",
+            "title": f"📚 HW-HORSE: {block['task']}",
+            "start_at": block['start'].isoformat(),
+            "end_at": block['end'].isoformat()
         })
 
-    return new_schedule
-
-# -----------------------------
-# LLM DECISION FUNCTION
-# -----------------------------
-def decide_action(step):
-    log("Using Hugging Face to decide next action...")
-
-    prompt = f"""
-You are a planning agent.
-
-Current state:
-{json.dumps(state, indent=2)}
-
-Choose ONE action from:
-- generate_schedule
-- evaluate_schedule
-- refine_schedule
-- stop
-
-Respond with ONLY the action name.
-"""
-
-    if not HF_API_KEY:
-        log("HF_API_KEY not set; using fallback decision")
-    else:
-        try:
-            response = requests.post(
-                API_URL,
-                headers=headers,
-                json={"inputs": prompt}
-            )
-
-            result = response.json()
-            text = result[0].get("generated_text", "").lower()
-
-            log(f"HF Raw Output: {text}")
-
-            if "generate" in text:
-                return "generate_schedule"
-            elif "evaluate" in text:
-                return "evaluate_schedule"
-            elif "refine" in text:
-                return "refine_schedule"
-            elif "stop" in text:
-                return "stop"
-
-        except Exception as e:
-            log(f"HF Error: {e}")
-
-    # 🔁 FALLBACK (VERY IMPORTANT)
-    log("Falling back to rule-based decision")
-
-    actions = ["generate_schedule", "evaluate_schedule", "refine_schedule", "stop"]
-    return actions[step % len(actions)]
-
-# -----------------------------
-# AGENT LOOP
-# -----------------------------
-def run_agent(tasks):
-    state["tasks"] = tasks
-    state["schedule"] = []
-    state["logs"] = []
-
-    log("Starting agent...")
-    log(f"Goal: {state['goal']}")
-
-    for step in range(5):  # multi-step loop
-        log(f"\n--- Step {step+1} ---")
-
-        action = decide_action(step)
-        log(f"Decision: {action}")
-
-        if action == "generate_schedule":
-            state["schedule"] = generate_schedule(state["tasks"])
-
-        elif action == "evaluate_schedule":
-            result = evaluate_schedule(state["schedule"], state["tasks"])
-            state["evaluation"] = result
-            log(f"Evaluation Result: {result}")
-
-        elif action == "refine_schedule":
-            state["schedule"] = refine_schedule(state["schedule"])
-
-        elif action == "stop":
-            log("Agent decided to stop.")
-            break
-
-        else:
-            log("Invalid decision, stopping.")
-            break
-
-        # --- Reactive behavior: simulate new task ---
-        if step == 1:
-            new_task = {
-                "name": "Surprise Quiz Study",
-                "due": 3,
-                "estimated_hours": 2
-            }
-            log("New task detected! Adding to state...")
-            state["tasks"].append(new_task)
-
-    log("\nFinal Schedule:")
-    for item in state["schedule"]:
-        log(str(item))
-
-    return state
-
-# -----------------------------
-# MAIN (TEST RUN)
-# -----------------------------
 if __name__ == "__main__":
-    sample_tasks = [
-        {"name": "Math Homework", "due": 2, "estimated_hours": 3},
-        {"name": "History Essay", "due": 5, "estimated_hours": 4},
-        {"name": "Biology Reading", "due": 3, "estimated_hours": 2}
-    ]
-
-    run_agent(sample_tasks)
+    agent = HomeworkHorse()
+    agent.run()
