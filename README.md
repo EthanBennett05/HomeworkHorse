@@ -12,7 +12,7 @@ Homework-Horse is a **Reasoning Agent** designed to bridge the gap between "I ha
 ### VS Code Setup
 Ensure Python is installed, then run the following in your terminal:
 ```bash
-pip install canvasapi python-dotenv
+pip install canvasapi python-dotenv huggingface_hub
 ```
  
 ---
