@@ -3,6 +3,32 @@
 
 Homework-Horse is a **Reasoning Agent** designed to bridge the gap between "I have an assignment" and "When am I actually going to do it?" It respects your sleep, avoids burnout, and writes directly to your Canvas calendar.
 
+## Prerequisites
+ 
+### Canvas Setup
+1. Log in to Canvas and go to **Account → Settings**
+2. Scroll to **Approved Integrations** and generate a new access token
+3. Fill in the required fields and save the token
+### VS Code Setup
+Ensure Python is installed, then run the following in your terminal:
+```bash
+pip install canvasapi python-dotenv
+```
+ 
+---
+ 
+## Running the App
+ 
+Execute the agent with:
+```bash
+python3 agents.py
+```
+ 
+Once complete, check your **Canvas Calendar** to review the changes.
+
+
+
+
 ## 🛠 Project Architecture
 The agent is split into modular components to handle different stages of the cognitive loop:
 
