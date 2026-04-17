@@ -41,10 +41,23 @@ The agent is split into modular components to handle different stages of the cog
 ## 🔄 The Workflow Loop
 
 ```mermaid
-    A[Start Agent] --> B[🔍 OBSERVE]
-    B -->|Fetch Assignments| C[🧠 PLAN]
-    C -->|Generate Schedule| D[⚖️ EVALUATE]
-    D -->|Check Safety/Deadlines| E{User Approval}
-    E -->|Approved| F[🚀 ACT]
-    E -->|Rejected| G[🛑 STOP]
-    F -->|Write to Canvas| H[✨ Finished]
+    graph TD
+    A[Start Agent] --> B[🔍 OBSERVE: Fetch Tasks]
+    B --> C[🧠 PLAN: Generate Initial Blocks]
+    C --> D[⚖️ EVALUATE: Check Burnout/Deadlines]
+    D -->|Fail: Burnout/Miss| C
+    D -->|Pass/Best Effort| E[💬 PROPOSE: Show formatted AM/PM schedule]
+    E --> F{User Confirmation}
+    F -->|'y'| G[🔄 SYNC: Surgical Update]
+    G --> H[✨ State-Aware Sync Finished]
+    F -->|'n'| I[🛑 STOP: Discard Plan]
+
+    subgraph "The Cognitive Loop"
+    C
+    D
+    end
+
+    subgraph "Surgical Sync Logic"
+    G --> G1[Compare Fingerprints]
+    G1 --> G2[Delete Old / Add New / Keep Intact]
+    end
