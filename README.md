@@ -1,7 +1,5 @@
 # 🐴 Homework-Horse
-> An autonomous agent that fetches your Canvas assignments and intelligently schedules your life.
-
-Homework-Horse is a **Reasoning Agent** designed to bridge the gap between "I have an assignment" and "When am I actually going to do it?" It respects your sleep, avoids burnout, and writes directly to your Canvas calendar.
+> Homework-Horse is a Reasoning Agent that transforms a chaotic list of Canvas assignments into a high-performance study schedule. Homework-Horse is designed to bridge the gap between "I have an assignment" and "When am I actually going to do it?" It respects your sleep, avoids burnout, and writes directly to your Canvas calendar.
 
 ## Prerequisites
  
@@ -9,6 +7,9 @@ Homework-Horse is a **Reasoning Agent** designed to bridge the gap between "I ha
 1. Log in to Canvas and go to **Account → Settings**
 2. Scroll to **Approved Integrations** and generate a new access token
 3. Fill in the required fields and save the token
+### Hugging Face Setup
+1. Go to `https://huggingface.co/settings/tokens`
+2. Create new token
 ### VS Code Setup
 Ensure Python is installed, then run the following in your terminal:
 ```bash
@@ -32,9 +33,18 @@ Once complete, check your **Canvas Calendar** to review the changes.
 ## 🛠 Project Architecture
 The agent is split into modular components to handle different stages of the cognitive loop:
 
-* **`agents.py`**: The Controller (The "Body"). It handles environment interaction (Canvas API).
-* **`tools.py`**: The Scheduler (The "Brain"). It contains the logic for time-blocking and sleep jumps.
-* **`evaluation.py`**: The Critic (The "Conscience"). It checks the plan for safety and deadlines.
+* **`agents.py`**: Manages the conversation state, maintains the "memory" of previous planning attempts, and makes final decisions based on tool feedback.
+* **`tools.py`**: Contains each of the tools.
+* **`evaluation.py`**: Used to validate the agent's logic to ensure reliability and safety.
+
+---
+
+| Tool Name | Capability | Purpose |
+| :--- | :--- | :--- |
+| **`fetch_canvas_tasks`** | **Observation** | Connects to the Canvas API to retrieve assignment titles and deadlines within a rolling window. |
+| **`generate_smart_schedule`** | **Planning** | A heuristic engine that maps tasks to time blocks while respecting sleep windows and "Blackout Dates." |
+| **`evaluate_schedule`** | **Criticism** | Analyzes a proposed plan for two failure states: **Burnout** (daily load > 6h) and **Deadline Violations**. |
+| **`sync_study_blocks`** | **Action** | Performs a "Surgical Sync." It uses fingerprinting to ensure it only adds or deletes what is necessary, leaving existing events untouched. |
 
 ---
 
@@ -42,22 +52,16 @@ The agent is split into modular components to handle different stages of the cog
 
 ```mermaid
     graph TD
-    A[Start Agent] --> B[🔍 OBSERVE: Fetch Tasks]
-    B --> C[🧠 PLAN: Generate Initial Blocks]
-    C --> D[⚖️ EVALUATE: Check Burnout/Deadlines]
-    D -->|Fail: Burnout/Miss| C
-    D -->|Pass/Best Effort| E[💬 PROPOSE: Show formatted AM/PM schedule]
-    E --> F{User Confirmation}
-    F -->|'y'| G[🔄 SYNC: Surgical Update]
-    G --> H[✨ State-Aware Sync Finished]
-    F -->|'n'| I[🛑 STOP: Discard Plan]
+    [Start Agent] --> [Fetch Tasks]
+    [Fetch Tasks] --> [Generate Initial Plan]
+    [Generate Initial Plan] --> [Check Burnout/Deadlines]
 
-    subgraph "The Cognitive Loop"
-    C
-    D
-    end
+    if [Check Burnout/Deadlines] Fails --> [Generate Initial Plan]
+    if [Check Burnout/Deadlines] Passes -->[💬 PROPOSE: Show schedule to user]
 
-    subgraph "Surgical Sync Logic"
-    G --> G1[Compare Fingerprints]
-    G1 --> G2[Delete Old / Add New / Keep Intact]
-    end
+    if [💬 PROPOSE: Show schedule to user] 'n' --> I[🛑 STOP: Discard Plan]
+    if [💬 PROPOSE: Show schedule to user] {User FeedBack} --> [Generate Initial Plan]
+    if [💬 PROPOSE: Show schedule to user] 'y' --> {User Confirmation}
+
+    {User Confirmation} -->|'y'| [🔄 SYNC: Surgical Update]
+    [🔄 SYNC: Surgical Update] --> [✨ State-Aware Sync Finished]
